@@ -46,7 +46,8 @@ object StreamerDriver {
     val streamcontext = new StreamingContext(sc, Seconds(batchInterval.toLong))
     val retryPolicy = new ExponentialBackoffRetry(1000, 3);
 
-    val curatorClient = CuratorFrameworkFactory.newClient(zookeeperhosts, retryPolicy)
+
+    val curatorClient = CuratorFrameworkFactory.newClient(zookeeperhosts, retryPolicy)  // Using Curator for connecting to Zookeeper
     curatorClient.start()
 
     val kafkaTopicSet = Set[String](config.getString("com.barc.assignment.kafkatopic"))
@@ -162,7 +163,14 @@ object StreamerDriver {
 
 
   def startStreamProcess(rdd: RDD[String],sqlContext: SQLContext) = {
-    sqlContext.read.json(rdd).show()
+
+
+    if(!rdd.isEmpty()) {
+      val emp = sqlContext.read.json(rdd)
+      emp.registerTempTable("Employee")
+      sqlContext.sql("select age,name from Employee ").filter(emp("age") === 30).show()
+    }
+
 
   }
 
