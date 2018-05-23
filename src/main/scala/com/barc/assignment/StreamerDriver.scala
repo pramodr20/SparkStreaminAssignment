@@ -10,12 +10,12 @@ import org.apache.curator.CuratorConnectionLossException
 import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{SQLContext, SaveMode}
 import org.apache.spark.streaming.dstream.{DStream, InputDStream}
 import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaUtils}
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
-
+import org.apache.spark.sql.hive._
 import scala.collection.mutable.HashMap
 import scala.util.Try
 
@@ -43,6 +43,7 @@ object StreamerDriver {
     .setMaster("local")
     val sc = new SparkContext(conf)
     val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    val hiveContext = new HiveContext(sqlContext.sparkContext)
     val streamcontext = new StreamingContext(sc, Seconds(batchInterval.toLong))
     val retryPolicy = new ExponentialBackoffRetry(1000, 3);
 
@@ -57,7 +58,8 @@ object StreamerDriver {
 
     directStream.foreachRDD(rdd => {
 
-      startStreamProcess(rdd.map(x=>x._2), sqlContext)
+
+      startStreamProcess(rdd.map(x=>x._2), hiveContext,config )
       saveOffsets(curatorClient, zkpath, rdd)
 
     }
@@ -162,14 +164,41 @@ object StreamerDriver {
   }
 
 
-  def startStreamProcess(rdd: RDD[String],sqlContext: SQLContext) = {
+  def startStreamProcess(rdd: RDD[String],hiveContext: HiveContext,config:Config) = {
+
+    val hiveexternalPath = config.getString("com.barc.assignment.hiveexternalpath")
+
+    val hivetablename =  config.getString("com.barc.assignment.hivetablename")
 
 
     if(!rdd.isEmpty()) {
-      val emp = sqlContext.read.json(rdd)
-      emp.registerTempTable("Employee")
-      sqlContext.sql("select age,name from Employee ").filter(emp("age") === 30).show()
+
+      createHiveTable(config, hiveContext);
+      val emp = hiveContext.read.json(rdd)
+      emp.write.insertInto(hivetablename)
+
+
+      // To show the current total in Hive
+      hiveContext.sql(s"select count(*) from $hivetablename").show()
+
+
+
     }
+
+
+  }
+
+
+
+  def createHiveTable(conf:Config,hiveContext:HiveContext): Unit ={
+
+
+
+   val hivetablename =  conf.getString("com.barc.assignment.hivetablename")
+    val hiveexternalpath =  conf.getString("com.barc.assignment.hiveexternalpath")
+
+    hiveContext.sql(s"create external table IF NOT EXISTS  $hivetablename ( age string, name string)  ROW FORMAT DELIMITED FIELDS TERMINATED BY ','  STORED AS TEXTFILE  LOCATION '$hiveexternalpath'")
+
 
 
   }
